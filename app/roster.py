@@ -14,7 +14,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import null, select
 from sqlalchemy.orm import Session
 
 from .db import Base, SessionLocal, engine, ensure_additive_schema
@@ -107,7 +107,12 @@ def owner_account(db: Session) -> User:
 
 
 def import_roster(db: Session, rows: list[RosterRow]) -> dict[str, int]:
-    """Create sections, students, and enrollments. Running it again changes nothing that already exists."""
+    """Create sections, students, and enrollments. Running it again creates nothing that already exists.
+
+    The export is the official list from the start of the semester, so enrollments have no start date
+    (enrolled_at NULL): every session of the class counts for them, including sheets scanned later for
+    earlier dates. Enrollments made by earlier imports with a start date are cleared to match.
+    """
     owner = owner_account(db)
     counts = {"sections": 0, "students": 0, "enrollments": 0}
     sections: dict[str, CourseSection] = {}
@@ -145,8 +150,10 @@ def import_roster(db: Session, rows: list[RosterRow]) -> dict[str, int]:
             select(Enrollment).where(Enrollment.section_id == section.id, Enrollment.student_id == student.id)
         )
         if enrolled is None:
-            db.add(Enrollment(section_id=section.id, student_id=student.id))
+            db.add(Enrollment(section_id=section.id, student_id=student.id, enrolled_at=null()))  # plain None would take the column default
             counts["enrollments"] += 1
+        elif enrolled.enrolled_at is not None:
+            enrolled.enrolled_at = None
     db.commit()
     return counts
 

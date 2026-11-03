@@ -489,6 +489,8 @@ dialog .row { margin-top: 20px; justify-content: flex-end; }
 .scan-line { font-family: "JetBrains Mono", monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
 .scan-pick { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
 .scan-check { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+.scan-whole-class { grid-column: 1 / -1; }
+.scan-whole-class[hidden] { display: none; }
 .scan-approve { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; grid-column: 1 / -1; }
 @media (max-width: 760px) {
   .scan-result { grid-template-columns: 1fr; }

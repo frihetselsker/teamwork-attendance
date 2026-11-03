@@ -111,3 +111,31 @@ def test_preview_can_return_the_photo_with_red_marks(client, professor, section,
     assert response.status_code == 200, response.text
     assert response.json()["annotated_image"].startswith("data:image/png;base64,")
     assert "flagged" not in response.json()
+
+
+def class_stats(client, professor, section):
+    return client.get(f"/api/v1/sections/{section}/statistics", headers=professor["headers"]).json()
+
+
+def test_backdated_sheet_leaves_out_students_added_later_unless_professor_confirms(client, professor, section, student, other_student):
+    body = {"session_date": "2026-01-05", "sessions": [{"label": "S1", "student_ids": [student["id"]]}]}
+    response = client.post(f"/api/v1/sections/{section}/attendance-scans/confirm", json=body, headers=professor["headers"])
+    assert response.status_code == 201, response.text
+    assert response.json()["enrollments_backdated"] == 0
+    stats = class_stats(client, professor, section)
+    assert stats["by_session"][0]["enrolled"] == 1
+
+    body = {**body, "session_date": "2026-01-12", "whole_class_on_date": True}
+    response = client.post(f"/api/v1/sections/{section}/attendance-scans/confirm", json=body, headers=professor["headers"])
+    assert response.status_code == 201, response.text
+    assert response.json()["enrollments_backdated"] == 2
+    by_day = {item["date"]: item for item in class_stats(client, professor, section)["by_session"]}
+    assert (by_day["2026-01-12"]["confirmed"], by_day["2026-01-12"]["enrolled"]) == (1, 2)
+    # Enrollment now starts on the 12th: the sheet from the week before still counts only who was ticked.
+    assert by_day["2026-01-05"]["enrolled"] == 1
+
+
+def test_preview_lists_when_students_joined_the_class(client, professor, section, student, fake_ocr):
+    response = upload(client, section, professor)
+    assert response.status_code == 200, response.text
+    assert len(response.json()["joined_dates"]) == 1

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.db import SessionLocal
 from app.models import CourseSection, Enrollment, User
 from app.roster import import_roster, placeholder_email, read_roster, split_name
@@ -47,3 +49,18 @@ def test_import_creates_students_once(client, tmp_path):
         assert db.query(Enrollment).count() == 4
         assert db.query(CourseSection).count() == 2
         assert db.query(User).filter(User.role == "student", User.is_active.is_(True)).count() == 0
+
+
+def test_imported_enrollments_count_from_the_start(client, tmp_path):
+    path = tmp_path / "list.csv"
+    path.write_text(CSV, encoding="utf-8")
+    rows = read_roster(path)
+    with SessionLocal() as db:
+        import_roster(db, rows)
+        assert {enrollment.enrolled_at for enrollment in db.query(Enrollment)} == {None}
+        # Imports made before this rule stored the import time: running it again clears it.
+        for enrollment in db.query(Enrollment):
+            enrollment.enrolled_at = datetime.now(timezone.utc)
+        db.commit()
+        assert import_roster(db, rows)["enrollments"] == 0
+        assert {enrollment.enrolled_at for enrollment in db.query(Enrollment)} == {None}
