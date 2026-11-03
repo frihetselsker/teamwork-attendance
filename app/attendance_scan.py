@@ -32,6 +32,25 @@ class ScanConfirmSession(BaseModel):
 class ScanConfirm(BaseModel):
     session_date: date
     sessions: list[ScanConfirmSession] = Field(min_length=1, max_length=10)
+    # The professor confirms that everyone now in the class was already in it on the sheet's date, so
+    # students added in the app later count for these sessions (as absent unless ticked).
+    whole_class_on_date: bool = False
+
+
+def as_utc(moment: datetime) -> datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def joined_later(db: Session, section_id: str, moment: datetime) -> list[Enrollment]:
+    """Students now in the class whose enrollment starts after the moment, so a session then would not count them."""
+    enrollments = db.scalars(
+        select(Enrollment).where(
+            Enrollment.section_id == section_id,
+            Enrollment.status == "active",
+            Enrollment.enrolled_at.is_not(None),
+        )
+    ).all()
+    return [enrollment for enrollment in enrollments if as_utc(enrollment.enrolled_at) > moment]
 
 
 def professor_students(db: Session, professor: User) -> list[tuple[User, list[str]]]:
@@ -111,6 +130,12 @@ def preview_scan(
         for student, classes in professor_students(db, professor)
     ]
     result = analyse(read_boxes(content), roster, session_date, default_year=date.today().year)
+    # Dates students joined this class in the app, so the page can tell the professor who a back-dated
+    # sheet would leave out of the statistics for whichever date they settle on.
+    result["joined_dates"] = sorted(
+        as_utc(enrollment.enrolled_at).date().isoformat()
+        for enrollment in joined_later(db, section_id, datetime.min.replace(tzinfo=timezone.utc))
+    )
     confirmed = result.pop("confirmed")
     flagged = result.pop("flagged")
     if annotate_sheet:
@@ -135,9 +160,24 @@ def confirm_scan(
         unknown = set(entry.student_ids) - known
         if unknown:
             raise HTTPException(status_code=422, detail="Some students are not in any of your classes")
+    default_start = datetime.combine(payload.session_date, time.min, tzinfo=timezone.utc)
+    starts = [as_utc(entry.starts_at) if entry.starts_at else default_start for entry in payload.sessions]
+    moved = 0
+    if payload.whole_class_on_date:
+        earliest = min(starts)
+        for enrollment in joined_later(db, section_id, earliest):
+            enrollment.enrolled_at = earliest
+            moved += 1
+            db.add(
+                AuditLog(
+                    actor_id=professor.id,
+                    action="enrollment_backdated",
+                    entity_type="enrollment",
+                    entity_id=enrollment.id,
+                )
+            )
     created = []
-    for entry in payload.sessions:
-        starts_at = entry.starts_at or datetime.combine(payload.session_date, time.min, tzinfo=timezone.utc)
+    for entry, starts_at in zip(payload.sessions, starts):
         session = AttendanceSession(
             section_id=section_id,
             opened_by=professor.id,
@@ -162,4 +202,4 @@ def confirm_scan(
         db.add(AuditLog(actor_id=professor.id, action="attendance_scanned", entity_type="attendance_session", entity_id=session.id))
         created.append({"label": entry.label, "session_id": session.id, "marked": len(set(entry.student_ids))})
     db.commit()
-    return {"sessions": created}
+    return {"sessions": created, "enrollments_backdated": moved}

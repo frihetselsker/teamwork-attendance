@@ -60,12 +60,33 @@ function scanReview(section, students, preview, dateInput) {
   const approve = el("button", { class: "btn", type: "button" }, "Approve and save");
   const note = el("p", { class: "muted" }, "Saved sessions are recorded as attendance taken from the sheet.");
 
+  // Students added to the class in the app after the sheet's date are left out of its statistics,
+  // unless the professor confirms they were already in the class then.
+  const joinedDates = preview.joined_dates || [];
+  const wholeClass = el("input", { type: "checkbox" });
+  wholeClass.checked = true;
+  const wholeClassText = el("span", {});
+  const wholeClassRow = el("label", { class: "scan-check scan-whole-class" }, wholeClass, wholeClassText);
+  function laterCount() {
+    return dateInput.value ? joinedDates.filter((joined) => joined >= dateInput.value).length : 0;
+  }
+  function drawWholeClass() {
+    const later = laterCount();
+    wholeClassRow.hidden = later === 0;
+    wholeClassText.textContent =
+      `${later} student${later === 1 ? " was" : "s were"} added to ${section.name} on or after this date. ` +
+      "They were in the class on this date: count them, as absent unless ticked.";
+  }
+  dateInput.addEventListener("change", drawWholeClass);
+  drawWholeClass();
+
   async function save() {
     const date = dateInput.value;
     if (!date) return toast("Choose the date of the sheet first");
     const payload = {
       session_date: date,
       sessions: sessions.map((session) => ({ label: session.label, student_ids: session.checkedIds() })),
+      whole_class_on_date: laterCount() > 0 && wholeClass.checked,
     };
     approve.disabled = true;
     try {
@@ -92,6 +113,7 @@ function scanReview(section, students, preview, dateInput) {
         )
       : null,
     sessions.map((session) => session.node),
+    wholeClassRow,
     el("div", { class: "scan-approve" }, approve, note),
   );
 }
