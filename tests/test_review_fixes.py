@@ -243,6 +243,31 @@ def test_removed_student_can_be_added_again(client, professor, student, section)
     assert len(client.get("/api/v1/sections", headers=student["headers"]).json()) == 1
 
 
+def test_readding_student_does_not_count_intermediate_classes_as_absences(
+    client, professor, student, section
+):
+    s1 = open_session(client, professor, section)
+    confirm(client, student, s1["id"], code=s1["code"])
+    close(client, professor, s1["id"])
+
+    client.delete(f"/api/v1/sections/{section}/enrollments/{student['id']}", headers=professor["headers"])
+
+    s2 = open_session(client, professor, section)
+    close(client, professor, s2["id"])
+
+    again = client.post(
+        f"/api/v1/sections/{section}/enrollments",
+        json={"student_id": student["id"]},
+        headers=professor["headers"],
+    )
+    assert again.status_code == 201
+
+    st = stats(client, student)
+    assert st["total_sessions"] == 1
+    assert st["present"] == 1
+    assert st["absent"] == 0
+
+
 def test_removing_a_student_not_in_class_is_not_found(client, professor, outsider, section):
     response = client.delete(f"/api/v1/sections/{section}/enrollments/{outsider['id']}", headers=professor["headers"])
     assert response.status_code == 404
