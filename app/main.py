@@ -361,6 +361,7 @@ def enroll_student(
     if existing is not None and existing.status != "active":
         # Re-adding a student who was removed earlier.
         existing.status = "active"
+        existing.enrolled_at = datetime.now(timezone.utc)
         existing.ended_at = None
         db.commit()
         return EnrollmentResponse(status="enrolled", student=student_summary(student))
